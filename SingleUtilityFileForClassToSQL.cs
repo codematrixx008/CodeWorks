@@ -351,6 +351,33 @@ public static class NetSuiteSchemaBuilder
     }
 
     #endregion
+
+    public static string GenerateAllCreateTablesSqlFile(List<NetSuiteModelClassTable> tables, string outputFolder)
+    {
+        if (!Directory.Exists(outputFolder))
+        {
+            Directory.CreateDirectory(outputFolder);
+        }
+    
+        var sb = new StringBuilder();
+    
+        foreach (var table in tables)
+        {
+            var sql = GenerateCreateTableSqlWithFk(table);
+    
+            // Append to combined string
+            sb.AppendLine(sql);
+            sb.AppendLine();
+    
+            // Write to file
+            var filePath = Path.Combine(outputFolder, $"{table.TableName}.sql");
+            File.WriteAllText(filePath, sql);
+        }
+    
+        return sb.ToString();
+    }
+
 }
+
 
 
