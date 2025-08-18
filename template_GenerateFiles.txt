@@ -1,0 +1,144 @@
+using NetSuite.ApiBridges.SchemaBuilder;
+using RazorEngine;
+using RazorEngine.Templating; // Install-Package RazorEngine
+using System.Collections.Generic;
+using System.IO;
+
+namespace NetSuite.ApiBridges.CodeBuilder
+{
+    public static class NetSuiteAPIBridgeBuilder
+    {
+        public static string GenerateFiles(List<SQLTableModel> tables, string outputFolder)
+        {
+            if (!Directory.Exists(outputFolder))
+            {
+                Directory.CreateDirectory(outputFolder);
+            }
+
+            var templatePath = Path.Combine("Templates", "BridgeTemplate.cshtml");
+            var templateContent = File.ReadAllText(templatePath);
+
+            string result = Engine.Razor.RunCompile(
+                templateContent,
+                key: "BridgeTemplateKey",
+                modelType: typeof(List<SQLTableModel>),
+                model: tables
+            );
+
+            var filePath = Path.Combine(outputFolder, "NetSuiteBridges.cs");
+            File.WriteAllText(filePath, result);
+
+            return filePath;
+        }
+    }
+}
+
+
+
+
+@using NetSuite.ApiBridges.SchemaBuilder
+@model List<SQLTableModel>
+
+@{
+    // helpers
+    Func<SQLTableModel, IEnumerable<SQLTableModel>> GetChildren = (table) => 
+        Model.Where(t => t.ParentTableName == table.TableName);
+}
+
+@foreach (var table in Model.Where(t => string.IsNullOrEmpty(t.ParentTableName))) // only parent tables
+{
+    var className = $"ns{table.TableName}Bridge";
+    var children = GetChildren(table);
+<text>
+using Compass.Common;
+using NetSuite.com.netsuiteapi.suitetalk;
+using System;
+using System.Collections.Generic;
+using System.Data;
+
+namespace NetSuite.ApiBridges
+{
+    internal partial class @className : nsTransactionBridge
+    {
+        public void Download()
+        {
+            var search = GetTransactionSearch(RecordType.@table.TableName.ToLower());
+            var parentDT = new NsBulkInsertDataTable(NsConst.SqlTbl_NetSuite_@table.TableName);
+
+            @foreach (var child in children)
+            {
+                <text>
+            var @child.TableName.ToLower()DT = new NsBulkInsertDataTable(NsConst.SqlTbl_NetSuite_@child.TableName);
+                </text>
+            }
+
+            DateTime runAt = DateTime.Now;
+
+            Func<dynamic, NsBulkInsertDataTable, DataRow> ParentMapToRow = (entity, tbl) =>
+            {
+                NsBulkDataRow r = tbl.GetNsBulkDataRow();
+                r.ToData("ApiRunAt", runAt);
+                @foreach (var col in table.Columns)
+                {
+                    <text>r.ToData("@col.ColumnName", entity.@col.ColumnName);</text>
+                }
+                return r.GetRow();
+            };
+
+            @foreach (var child in children)
+            {
+                <text>
+            Func<dynamic, dynamic, NsBulkInsertDataTable, DataRow> @child.TableNameMapToRow = (parent, entity, tbl) =>
+            {
+                NsBulkDataRow r = tbl.GetNsBulkDataRow();
+                r.ToData("ApiRunAt", runAt);
+                r.ToData("@child.ForeignKeyColumn", parent.@child.ParentPkColumn);
+                @foreach (var col in child.Columns)
+                {
+                    <text>r.ToData("@col.ColumnName", entity.@col.ColumnName);</text>
+                }
+                return r.GetRow();
+            };
+                </text>
+            }
+
+            nsSearchEntityWithPaging<dynamic, dynamic>(search, obj =>
+            {
+                if (obj == null) return;
+                var fullResponse = nsSearchAllDetails(obj.internalId, RecordType.@table.TableName.ToLower());
+                if (fullResponse?.record != null)
+                {
+                    var parent = fullResponse.record;
+
+                    parentDT.AddBatchRow(parent, ParentMapToRow);
+
+                    @foreach (var child in children)
+                    {
+                        <text>
+                    if (parent.@child.TableName.ToLower()List != null)
+                        foreach (var item in parent.@child.TableName.ToLower()List.item)
+                            @child.TableName.ToLower()DT.AddBatchRow(parent, item, @child.TableNameMapToRow);
+                        </text>
+                    }
+                }
+            }, NsConst.SqlTbl_NetSuite_@table.TableName);
+
+            parentDT.AddRemainingRows();
+
+            @foreach (var child in children)
+            {
+                <text>@child.TableName.ToLower()DT.AddRemainingRows();</text>
+            }
+        }
+    }
+
+    internal partial class @className
+    {
+        // manual code can go here
+    }
+}
+</text>
+}
+
+
+
