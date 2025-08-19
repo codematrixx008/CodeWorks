@@ -1,56 +1,65 @@
-public static string GenerateInsertUpdateProcSql(SQLTableModel tempTable, SQLTableModel permanentTable) {
-  var sb = new StringBuilder();
+public static string GenerateInsertUpdateProcSql_Separate(SQLTableModel tempTable, SQLTableModel permanentTable)
+{
+    var sb = new StringBuilder();
 
-  string procName = $ "InsertUpdate{permanentTable.TableName}Data";
+    string procName = $"InsertUpdate{permanentTable.TableName}Data";
 
-  sb.AppendLine($ "CREATE PROCEDURE {procName}");
-  sb.AppendLine("AS");
-  sb.AppendLine("BEGIN");
-  sb.AppendLine("    SET NOCOUNT ON;");
-  sb.AppendLine();
+    sb.AppendLine($"CREATE PROCEDURE {procName}");
+    sb.AppendLine("AS");
+    sb.AppendLine("BEGIN");
+    sb.AppendLine("    SET NOCOUNT ON;");
+    sb.AppendLine();
 
-  // MERGE statement
-  sb.AppendLine($ "    MERGE INTO [{permanentTable.TableName}] AS Target");
-  sb.AppendLine($ "    USING [{tempTable.TableName}] AS Source");
-  sb.AppendLine($ "    ON Target.[{permanentTable.PrimaryKeyColumn}] = Source.[{tempTable.PrimaryKeyColumn}]");
-  sb.AppendLine("    WHEN MATCHED THEN");
-  sb.AppendLine("        UPDATE SET");
+    sb.AppendLine($"    -- First Update existing records");
+    sb.AppendLine($"    UPDATE P");
+    sb.AppendLine($"    SET");
 
-  // Generate update column mappings (skip primary key)
-  var updateColumns = permanentTable.Columns.Where(c =>!c.Equals(permanentTable.PrimaryKeyColumn, StringComparison.OrdinalIgnoreCase)).ToList();
+    var updateColumns = permanentTable.Columns
+        .Where(c => !c.Equals(permanentTable.PrimaryKeyColumn, StringComparison.OrdinalIgnoreCase))
+        .ToList();
 
-  for (int i = 0; i < updateColumns.Count; i++) {
-    string col = updateColumns[i];
-    string comma = (i == updateColumns.Count - 1) ? "": ",";
-    sb.AppendLine($ "            Target.[{col}] = Source.[{col}]{comma}");
-  }
+    for (int i = 0; i < updateColumns.Count; i++)
+    {
+        string col = updateColumns[i];
+        string comma = (i == updateColumns.Count - 1) ? "" : ",";
+        sb.AppendLine($"        P.[{col}] = T.[{col}]{comma}");
+    }
 
-  // Insert mapping
-  sb.AppendLine("    WHEN NOT MATCHED BY TARGET THEN");
-  sb.AppendLine("        INSERT (");
+    sb.AppendLine($"    FROM [{permanentTable.TableName}] P");
+    sb.AppendLine($"    INNER JOIN [{tempTable.TableName}] T");
+    sb.AppendLine($"        ON P.[{permanentTable.PrimaryKeyColumn}] = T.[{tempTable.PrimaryKeyColumn}];");
+    sb.AppendLine();
 
-  for (int i = 0; i < permanentTable.Columns.Count; i++) {
-    string col = permanentTable.Columns[i];
-    string comma = (i == permanentTable.Columns.Count - 1) ? "": ",";
-    sb.AppendLine($ "            [{col}]{comma}");
-  }
+    sb.AppendLine($"    -- Then Insert new records");
+    sb.AppendLine($"    INSERT INTO [{permanentTable.TableName}] (");
 
-  sb.AppendLine("        )");
-  sb.AppendLine("        VALUES (");
+    for (int i = 0; i < permanentTable.Columns.Count; i++)
+    {
+        string col = permanentTable.Columns[i];
+        string comma = (i == permanentTable.Columns.Count - 1) ? "" : ",";
+        sb.AppendLine($"        [{col}]{comma}");
+    }
 
-  for (int i = 0; i < permanentTable.Columns.Count; i++) {
-    string col = permanentTable.Columns[i];
-    string comma = (i == permanentTable.Columns.Count - 1) ? "": ",";
-    sb.AppendLine($ "            Source.[{col}]{comma}");
-  }
+    sb.AppendLine("    )");
+    sb.AppendLine("    SELECT");
 
-  sb.AppendLine("        );");
+    for (int i = 0; i < permanentTable.Columns.Count; i++)
+    {
+        string col = permanentTable.Columns[i];
+        string comma = (i == permanentTable.Columns.Count - 1) ? "" : ",";
+        sb.AppendLine($"        T.[{col}]{comma}");
+    }
 
-  // Optional: Clear temp table
-  sb.AppendLine();
-  sb.AppendLine($ "    DELETE FROM [{tempTable.TableName}];");
+    sb.AppendLine($"    FROM [{tempTable.TableName}] T");
+    sb.AppendLine($"    WHERE NOT EXISTS (");
+    sb.AppendLine($"        SELECT 1 FROM [{permanentTable.TableName}] P");
+    sb.AppendLine($"        WHERE P.[{permanentTable.PrimaryKeyColumn}] = T.[{tempTable.PrimaryKeyColumn}]");
+    sb.AppendLine("    );");
+    sb.AppendLine();
 
-  sb.AppendLine("END;");
+    sb.AppendLine($"    -- Optional: Clear temporary table");
+    sb.AppendLine($"    DELETE FROM [{tempTable.TableName}];");
 
-  return sb.ToString();
+    sb.AppendLine("END;");
+    return sb.ToString();
 }
